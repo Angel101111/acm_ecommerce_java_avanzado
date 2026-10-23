@@ -36,3 +36,9 @@ out/
 ### VS Code ###
 .vscode/
 /postgres_data/
+
+### Credenciales locales ###
+.env
+.env.*
+!.env.example
+envejemplo
