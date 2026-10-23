@@ -1,0 +1,221 @@
+name: CI Java y GHCR
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Compilar y empaquetar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurar Java 25 y cache Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: |
+            **/*.gradle
+            **/gradle-wrapper.properties
+      - name: Compilar y generar JAR ejecutable
+        run: bash ./gradlew --no-daemon --console=plain clean bootJar
+      - name: Conservar JAR para Docker
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  static-analysis:
+    name: Analisis estatico PMD
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurar Java 25 y cache Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: Detectar bugs potenciales y problemas de mantenibilidad
+        run: bash ./gradlew --no-daemon --console=plain pmdMain
+      - name: Conservar reportes PMD incluso ante fallos
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmd-reports
+          path: build/reports/pmd/
+          if-no-files-found: warn
+          retention-days: 7
+
+  unit-test:
+    name: Pruebas unitarias
+    needs: static-analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurar Java 25 y cache Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: Ejecutar pruebas unitarias sin base de datos
+        run: bash ./gradlew --no-daemon --console=plain test
+      - name: Conservar resultados incluso ante fallos
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+          if-no-files-found: warn
+          retention-days: 7
+
+  integration-test:
+    name: Pruebas de integracion con PostgreSQL
+    needs: unit-test
+    # Los secretos solo se entregan a ramas del propio repositorio.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      SPRING_DATASOURCE_URL: ${{ secrets.SPRING_DATASOURCE_URL }}
+      SPRING_DATASOURCE_USERNAME: ${{ secrets.SPRING_DATASOURCE_USERNAME }}
+      SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ${{ secrets.DB_NAME }}
+          POSTGRES_USER: ${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configurar Java 25 y cache Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: Validar secretos requeridos sin mostrarlos
+        run: |
+          for variable in DB_NAME DB_USER DB_PASSWORD DB_PORT SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD; do
+            if [[ -z "${!variable}" ]]; then
+              echo "::error::Falta configurar el secreto ${variable}"
+              exit 1
+            fi
+          done
+          if [[ "$DB_PORT" != 5432 || "$SPRING_DATASOURCE_URL" != "jdbc:postgresql://localhost:5432/${DB_NAME}" ]]; then
+            echo "::error::CI requiere DB_PORT=5432 y la URL JDBC de su servicio local PostgreSQL."
+            exit 1
+          fi
+          if [[ "$SPRING_DATASOURCE_USERNAME" != "$DB_USER" || "$SPRING_DATASOURCE_PASSWORD" != "$DB_PASSWORD" ]]; then
+            echo "::error::Las credenciales de Spring deben coincidir con las del servicio PostgreSQL."
+            exit 1
+          fi
+      - name: Ejecutar pruebas de integracion
+        run: bash ./gradlew --no-daemon --console=plain integrationTest
+      - name: Conservar resultados incluso ante fallos
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-reports
+          path: |
+            build/reports/tests/integrationTest/
+            build/test-results/integrationTest/
+          if-no-files-found: warn
+          retention-days: 7
+
+  docker:
+    name: Construir y publicar imagen
+    needs: [build, integration-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recuperar JAR compilado
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: build/libs
+      - name: Calcular nombre y etiquetas de imagen
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          # checkout prueba el commit de merge del PR; etiquetar esa misma revision.
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          image="ghcr.io/${REPOSITORY,,}"
+          short_sha="${SOURCE_SHA:0:7}"
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Autenticarse en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Construir y publicar latest y short-SHA
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

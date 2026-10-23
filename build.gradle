@@ -1,5 +1,6 @@
 plugins {
 	id 'java'
+	id 'pmd'
 	id 'org.springframework.boot' version '4.0.5'
 	id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -27,9 +28,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	// implementation 'org.springframework.boot:spring-boot-starter-webflux'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
-	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
 	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'
-	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'org.postgresql:postgresql'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -39,6 +39,7 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok-mapstruct-binding:0.2.0'
 	// testImplementation 'org.springframework.boot:spring-boot-starter-data-r2dbc-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	// testImplementation 'org.springframework.boot:spring-boot-starter-webflux-test'
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -53,4 +54,44 @@ dependencyManagement {
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+sourceSets {
+	integrationTest {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+}
+
+configurations {
+	integrationTestImplementation.extendsFrom testImplementation
+	integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+tasks.register('integrationTest', Test) {
+	description = 'Pruebas de integracion con PostgreSQL.'
+	group = 'verification'
+	testClassesDirs = sourceSets.integrationTest.output.classesDirs
+	classpath = sourceSets.integrationTest.runtimeClasspath
+	useJUnitPlatform()
+	shouldRunAfter tasks.named('test')
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('integrationTest')
+}
+
+pmd {
+	toolVersion = '7.28.0'
+	ruleSets = []
+	ruleSetFiles = files('config/pmd/ruleset.xml')
+	ignoreFailures = false
+	consoleOutput = true
+}
+
+tasks.withType(Pmd).configureEach {
+	reports {
+		xml.required = true
+		html.required = true
+	}
 }
