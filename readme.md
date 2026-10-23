@@ -55,8 +55,8 @@ En **Settings → Secrets and variables → Actions → New repository secret**,
 | `DB_NAME` | Nombre de la base de pruebas, por ejemplo `ecommerce_ci`. |
 | `DB_USER` | Usuario exclusivo de pruebas. |
 | `DB_PASSWORD` | Contraseña exclusiva de pruebas. |
-| `DB_PORT` | `5432`. |
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/` seguido del valor de `DB_NAME`. |
+| `DB_PORT` | Puerto del runner, por ejemplo `5434`, como en el archivo del ejercicio. |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:<DB_PORT>/<DB_NAME>`; reemplazar ambos marcadores por los valores de sus secretos. |
 | `SPRING_DATASOURCE_USERNAME` | El mismo valor de `DB_USER`. |
 | `SPRING_DATASOURCE_PASSWORD` | El mismo valor de `DB_PASSWORD`. |
 
@@ -64,6 +64,10 @@ Estas variables se inyectan únicamente en el job de integración y en su servic
 PostgreSQL. El workflow valida su coherencia sin imprimir valores. El perfil `test`
 crea y elimina el esquema: utilizar exclusivamente una base desechable de pruebas.
 La aplicación ya no contiene credenciales de conexión en `application.yaml`.
+
+Por ejemplo, `DB_NAME=ecommerce` y `DB_PORT=5434` requieren la URL
+`jdbc:postgresql://localhost:5434/ecommerce`. Docker publica el puerto elegido del
+runner hacia el puerto interno `5432` de PostgreSQL; ambos puertos pueden ser distintos.
 
 El contenedor se inicia en un paso después de validar los secretos, espera a estar
 `healthy` y comprueba una conexión autenticada con `SELECT 1` antes de las pruebas.
@@ -92,7 +96,7 @@ con valores de pruebas. Luego iniciar una base desechable:
 
 ```bash
 docker run --detach --rm --name ecommerce-ci-postgres \
-  --publish 127.0.0.1:5432:5432 \
+  --publish "127.0.0.1:${DB_PORT}:5432" \
   --env POSTGRES_DB="$DB_NAME" \
   --env POSTGRES_USER="$DB_USER" \
   --env POSTGRES_PASSWORD="$DB_PASSWORD" \

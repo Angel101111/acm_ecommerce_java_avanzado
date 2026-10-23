@@ -135,8 +135,12 @@ jobs:
               exit 1
             fi
           done
-          if [[ "$DB_PORT" != 5432 || "$SPRING_DATASOURCE_URL" != "jdbc:postgresql://localhost:5432/${DB_NAME}" ]]; then
-            echo "::error::CI requiere DB_PORT=5432 y la URL JDBC de su servicio local PostgreSQL."
+          if [[ ! "$DB_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( DB_PORT > 65535 )); then
+            echo "::error::DB_PORT debe ser un numero de puerto entre 1 y 65535."
+            exit 1
+          fi
+          if [[ "$SPRING_DATASOURCE_URL" != "jdbc:postgresql://localhost:${DB_PORT}/${DB_NAME}" ]]; then
+            echo "::error::La URL JDBC debe usar localhost y coincidir con DB_PORT y DB_NAME."
             exit 1
           fi
           if [[ "$SPRING_DATASOURCE_USERNAME" != "$DB_USER" || "$SPRING_DATASOURCE_PASSWORD" != "$DB_PASSWORD" ]]; then
@@ -151,7 +155,7 @@ jobs:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           docker run --detach --name ecommerce-ci-postgres \
-            --publish 127.0.0.1:5432:5432 \
+            --publish "127.0.0.1:${DB_PORT}:5432" \
             --env POSTGRES_DB --env POSTGRES_USER --env POSTGRES_PASSWORD \
             --health-cmd 'pg_isready -h 127.0.0.1' \
             --health-interval 2s --health-timeout 5s --health-retries 30 \
