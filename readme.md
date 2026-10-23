@@ -28,6 +28,7 @@ Se conserva el JAR durante siete días. Los reportes XML/HTML de PMD y las prueb
 guardan incluso si esas tareas fallan. Solo `docker` tiene `packages: write`;
 los demás jobs tienen únicamente `contents: read`. Los checkouts no conservan credenciales.
 Las ejecuciones anteriores de un mismo PR se cancelan al recibir cambios nuevos.
+Las acciones de checkout, Java, artefactos y Docker utilizan versiones con Node.js 24.
 
 ## Dos apartados adicionales elegidos
 
@@ -63,6 +64,12 @@ Estas variables se inyectan únicamente en el job de integración y en su servic
 PostgreSQL. El workflow valida su coherencia sin imprimir valores. El perfil `test`
 crea y elimina el esquema: utilizar exclusivamente una base desechable de pruebas.
 La aplicación ya no contiene credenciales de conexión en `application.yaml`.
+
+El contenedor se inicia en un paso después de validar los secretos, espera a estar
+`healthy` y comprueba una conexión autenticada con `SELECT 1` antes de las pruebas.
+Si el arranque falla, muestra los logs de PostgreSQL; al terminar el job elimina el
+contenedor, incluso si las pruebas fallan. Los informes de integración solo se suben
+cuando existen resultados XML, para evitar advertencias si las pruebas no llegaron a iniciar.
 
 `GITHUB_TOKEN` se proporciona automáticamente; no se necesita guardar un token personal
 para publicar. No subir `.env`, `envejemplo`, claves SSH ni contraseñas al repositorio.
